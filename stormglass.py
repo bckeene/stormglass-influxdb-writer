@@ -1,3 +1,11 @@
+"""
+Storm Glass → InfluxDB Writer
+
+Fetches hourly weather/ocean data from the Storm Glass API for each beach
+location in the configured CSV, then writes it as time-series points to
+an InfluxDB Cloud bucket.
+"""
+
 import csv
 import json
 import requests
@@ -18,14 +26,14 @@ client = influxdb_client.InfluxDBClient(
 write_api = client.write_api(write_options=SYNCHRONOUS)
 
 
-# Supporting Functions
-
 def load_beach_metadata(path):
+    """Load beach locations from a CSV file."""
     with open(path, encoding='utf-8') as f:
         return list(csv.DictReader(f))
 
 
 def fetch_weather_data(lat, lon, start, end):
+    """Fetch hourly weather data from Storm Glass for a given coordinate and time range."""
     url = 'https://api.stormglass.io/v2/weather/point'
     params = {
         'lat': float(lat),
@@ -49,6 +57,7 @@ def fetch_weather_data(lat, lon, start, end):
 
 
 def create_weather_point(metadata, metrics):
+    """Convert a single hour of weather data into an InfluxDB Point."""
     time = arrow.get(metrics['time']).timestamp()
 
     return (
@@ -73,12 +82,10 @@ def create_weather_point(metadata, metrics):
     )
 
 
-# Main
-
 def main():
-    beach_data_path = config.beaches_directory
-    beaches = load_beach_metadata(beach_data_path)
+    beaches = load_beach_metadata(config.beaches_directory)
 
+    # Fetch the last 5 days of data
     now = arrow.utcnow()
     start_time = now.shift(days=-5).timestamp()
     end_time = now.timestamp()
@@ -89,13 +96,13 @@ def main():
         try:
             hourly_data = fetch_weather_data(beach['lat'], beach['lon'], start_time, end_time)
         except requests.RequestException as e:
-            print(f"Failed to fetch data for {beach['name']}: {e}")
+            print(f"  Failed to fetch data for {beach['name']}: {e}")
             continue
 
         for hourly_metrics in hourly_data:
             if 'airTemperature' in hourly_metrics:
                 point = create_weather_point(beach, hourly_metrics)
-                print(point.to_line_protocol())
+                print(f"  {point.to_line_protocol()}")
                 write_api.write(bucket=config.influx_bucket, org=config.influx_org, record=point)
 
 
